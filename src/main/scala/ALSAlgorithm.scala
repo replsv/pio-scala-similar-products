@@ -46,8 +46,8 @@ class ALSAlgorithm(val ap: ALSAlgorithmParams)
   @transient lazy val logger = Logger[this.type]
 
   def train(sc: SparkContext, data: PreparedData): ALSModel = {
-    require(!data.viewEvents.take(1).isEmpty,
-      s"viewEvents in PreparedData cannot be empty." +
+    require(!data.rateEvents.take(1).isEmpty, // MODIFIED
+      s"rateEvents in PreparedData cannot be empty." +
       " Please check if DataSource generates TrainingData" +
       " and Preprator generates PreparedData correctly.")
     require(!data.users.take(1).isEmpty,
@@ -67,7 +67,7 @@ class ALSAlgorithm(val ap: ALSAlgorithmParams)
       (itemStringIntMap(id), item)
     }.collectAsMap.toMap
 
-    val mllibRatings = data.viewEvents
+    val mllibRatings = data.rateEvents
       .map { r =>
         // Convert user and item String IDs to Int index for MLlib
         val uindex = userStringIntMap.getOrElse(r.user, -1)
@@ -81,15 +81,23 @@ class ALSAlgorithm(val ap: ALSAlgorithmParams)
           logger.info(s"Couldn't convert nonexistent item ID ${r.item}"
             + " to Int index.")
 
-        ((uindex, iindex), 1)
+        ((uindex, iindex), (r.rating, r.t)) // MODIFIED
       }.filter { case ((u, i), v) =>
         // keep events with valid user and item index
         (u != -1) && (i != -1)
-      }.reduceByKey(_ + _) // aggregate all view events of same user-item pair
-      .map { case ((u, i), v) =>
-        // MLlibRating requires integer index for user and item
-        MLlibRating(u, i, v)
+      }.reduceByKey { case (v1, v2) => // MODIFIED
+        // if a user may rate same item with different value at different times,
+        // use the latest value for this case.
+        // Can remove this reduceByKey() if no need to support this case.
+        val (rating1, t1) = v1
+        val (rating2, t2) = v2
+        // keep the latest value
+        if (t1 > t2) v1 else v2
       }
+      .map { case ((u, i), (rating, t)) => // MODIFIED
+        // MLlibRating requires integer index for user and item
+        MLlibRating(u, i, rating) // MODIFIED
+      }.cache()
 
     // MLLib ALS cannot handle empty training data.
     require(!mllibRatings.take(1).isEmpty,
@@ -99,13 +107,12 @@ class ALSAlgorithm(val ap: ALSAlgorithmParams)
     // seed for MLlib ALS
     val seed = ap.seed.getOrElse(System.nanoTime)
 
-    val m = ALS.trainImplicit(
+    val m = ALS.train(
       ratings = mllibRatings,
       rank = ap.rank,
       iterations = ap.numIterations,
       lambda = ap.lambda,
       blocks = -1,
-      alpha = 1.0,
       seed = seed)
 
     new ALSModel(
