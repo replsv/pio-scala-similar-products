@@ -7,6 +7,6 @@ name := "template-scala-parallel-similarproduct"
 organization := "org.apache.predictionio"
 
 libraryDependencies ++= Seq(
-  "io.prediction"    %% "apache-predictionio-core"          % pioVersion.value % "provided",
+  "org.apache.predictionio"    %% "apache-predictionio-core"          % pioVersion.value % "provided",
   "org.apache.spark" %% "spark-core"    % "1.2.0" % "provided",
   "org.apache.spark" %% "spark-mllib"   % "1.2.0" % "provided")
